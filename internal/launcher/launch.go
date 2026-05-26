@@ -25,9 +25,13 @@ func Launch(cwd string) error {
 		// Split the current tmux window horizontally, 40% width, start in cwd
 		cmd = exec.Command("tmux", "split-window", "-h", "-p", "40", "-c", cwd, tgdBin)
 	} else {
-		// Fallback: open a new Ghostty window running tgd
-		cmd = exec.Command("ghostty", "--", tgdBin)
-		cmd.Dir = cwd
+		// Fallback: open a new Ghostty window running tgd.
+		// Ghostty uses -e <command> to run a specific program (not --).
+		// --working-directory sets the starting cwd inside the new window.
+		cmd = exec.Command("ghostty",
+			"--working-directory="+cwd,
+			"-e", tgdBin,
+		)
 	}
 
 	// Detach from parent session so tgd survives when tgd-hook exits
