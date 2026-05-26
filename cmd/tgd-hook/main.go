@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/chrisrogers/tgd/internal/ipc"
@@ -52,6 +54,24 @@ func main() {
 		}
 	}
 
+	// Resolve the git repo root for cwd. If cwd isn't inside a git repo,
+	// there's nothing to diff — exit silently.
+	repoRoot, err := gitRepoRoot(cwd)
+	if err != nil {
+		os.Exit(0)
+	}
+
+	// Guard: only proceed if the edited file lives inside the repo.
+	// This prevents tgd from popping open when Claude edits files outside
+	// the current project (e.g. ~/.claude/settings.json, /tmp/scratch, etc.).
+	filePath := payload.ToolInput.FilePath
+	if filePath != "" {
+		abs, err := filepath.Abs(filePath)
+		if err != nil || !strings.HasPrefix(abs, repoRoot+string(filepath.Separator)) {
+			os.Exit(0)
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		os.Exit(0)
@@ -86,4 +106,14 @@ func main() {
 	// If we still can't connect, tgd is starting up and will load the diff
 	// on its own from Init() — no action needed.
 	os.Exit(0)
+}
+
+// gitRepoRoot returns the absolute path to the git repository root containing
+// dir. Returns an error if dir is not inside a git repository.
+func gitRepoRoot(dir string) (string, error) {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
