@@ -36,8 +36,11 @@ func TestAlign_SimpleReplace(t *testing.T) {
 		t.Fatalf("want 3 rows, got %d: %+v", len(got), got)
 	}
 	assertRow(t, got[0], KindContext, "a", KindContext, "a")
+	assertLineNos(t, got[0], 1, 1)
 	assertRow(t, got[1], KindRemoved, "b", KindAdded, "X")
+	assertLineNos(t, got[1], 2, 2) // both sides have line 2 (replace pair)
 	assertRow(t, got[2], KindContext, "c", KindContext, "c")
+	assertLineNos(t, got[2], 3, 3)
 }
 
 func TestAlign_PureInsert(t *testing.T) {
@@ -54,8 +57,11 @@ func TestAlign_PureInsert(t *testing.T) {
 		t.Fatalf("want 3 rows, got %d", len(got))
 	}
 	assertRow(t, got[0], KindContext, "a", KindContext, "a")
+	assertLineNos(t, got[0], 1, 1)
 	assertRow(t, got[1], KindFiller, "", KindAdded, "NEW")
+	assertLineNos(t, got[1], 0, 2) // filler on left (no orig line), line 2 on right
 	assertRow(t, got[2], KindContext, "b", KindContext, "b")
+	assertLineNos(t, got[2], 2, 3) // orig line 2, curr line 3
 }
 
 func TestAlign_PureDelete(t *testing.T) {
@@ -72,8 +78,11 @@ func TestAlign_PureDelete(t *testing.T) {
 		t.Fatalf("want 3 rows, got %d", len(got))
 	}
 	assertRow(t, got[0], KindContext, "a", KindContext, "a")
+	assertLineNos(t, got[0], 1, 1)
 	assertRow(t, got[1], KindRemoved, "b", KindFiller, "")
+	assertLineNos(t, got[1], 2, 0) // orig line 2, filler on right (no curr line)
 	assertRow(t, got[2], KindContext, "c", KindContext, "c")
+	assertLineNos(t, got[2], 3, 2) // orig line 3, curr line 2 (b was deleted)
 }
 
 func TestAlign_MultipleInsertVsOneDelete(t *testing.T) {
@@ -91,8 +100,10 @@ func TestAlign_MultipleInsertVsOneDelete(t *testing.T) {
 	}
 	// Row 0: old paired with new1
 	assertRow(t, got[0], KindRemoved, "old", KindAdded, "new1")
+	assertLineNos(t, got[0], 1, 1) // orig line 1, curr line 1
 	// Row 1: filler paired with new2
 	assertRow(t, got[1], KindFiller, "", KindAdded, "new2")
+	assertLineNos(t, got[1], 0, 2) // filler on left, curr line 2
 }
 
 func TestAlign_NewFile(t *testing.T) {
@@ -114,6 +125,8 @@ func TestAlign_NewFile(t *testing.T) {
 		if al.RightText != curr[i] {
 			t.Errorf("row %d: right text want %q, got %q", i, curr[i], al.RightText)
 		}
+		// Left is filler (no line number); right is 1-based
+		assertLineNos(t, al, 0, i+1)
 	}
 }
 
@@ -130,6 +143,8 @@ func TestAlign_DeletedFile(t *testing.T) {
 		if al.RightKind != KindFiller {
 			t.Errorf("row %d: right kind want Filler, got %v", i, al.RightKind)
 		}
+		// Left is 1-based; right is filler (no line number)
+		assertLineNos(t, al, i+1, 0)
 	}
 }
 
@@ -186,5 +201,17 @@ func assertRow(t *testing.T, al AlignedLine, lk LineKind, lt string, rk LineKind
 	}
 	if al.RightText != rt {
 		t.Errorf("right text: want %q, got %q", rt, al.RightText)
+	}
+}
+
+// assertLineNos checks the line numbers for a single AlignedLine.
+// Pass 0 to assert that a side has no line number (filler row).
+func assertLineNos(t *testing.T, al AlignedLine, wantLeft, wantRight int) {
+	t.Helper()
+	if al.LeftLineNo != wantLeft {
+		t.Errorf("left lineNo: want %d, got %d", wantLeft, al.LeftLineNo)
+	}
+	if al.RightLineNo != wantRight {
+		t.Errorf("right lineNo: want %d, got %d", wantRight, al.RightLineNo)
 	}
 }

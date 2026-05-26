@@ -2,6 +2,7 @@
 package diff
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,7 +107,11 @@ func LoadAligned(root string, file FileEntry) ([]AlignedLine, error) {
 
 	switch file.Status {
 	case "??":
-		// Untracked: show entire file as additions, nothing on left
+		// Untracked: show entire file as additions, nothing on left.
+		// Guard against binary files — reading them as text produces garbage.
+		if isBinaryFile(absPath) {
+			return binaryPlaceholder(), nil
+		}
 		curr, err := CurrentLines(absPath)
 		if err != nil {
 			return nil, err
@@ -114,27 +119,78 @@ func LoadAligned(root string, file FileEntry) ([]AlignedLine, error) {
 		return AlignNewFile(curr), nil
 
 	case "D":
-		// Deleted: show entire original as removals, nothing on right
-		orig, err := OrigLines(root, file.Path)
+		// Deleted: show entire original as removals, nothing on right.
+		raw, err := exec.Command("git", "-C", root, "show", "HEAD:"+file.Path).Output()
 		if err != nil {
 			return nil, err
 		}
-		return AlignDeletedFile(orig), nil
+		if isBinaryContent(raw) {
+			return binaryPlaceholder(), nil
+		}
+		return AlignDeletedFile(splitLines(string(raw))), nil
 
 	default:
-		// Modified or Added (tracked): use git diff HEAD
+		// Modified or Added (tracked): use git diff HEAD.
+		// Guard against binary files.
+		if file.Status != "D" && isBinaryFile(absPath) {
+			return binaryPlaceholder(), nil
+		}
 		rawDiff, err := RawDiff(root, file.Path)
 		if err != nil {
 			return nil, err
+		}
+		// git diff itself signals binary files with a "Binary files … differ" line
+		if isBinaryDiff(rawDiff) {
+			return binaryPlaceholder(), nil
 		}
 		hunks, err := ParseHunks(rawDiff)
 		if err != nil {
 			return nil, err
 		}
-		orig, _ := OrigLines(root, file.Path)   // nil for new tracked files
-		curr, _ := CurrentLines(absPath)         // nil for deleted tracked files
+		orig, _ := OrigLines(root, file.Path) // nil for new tracked files
+		curr, _ := CurrentLines(absPath)      // nil for deleted tracked files
 		return Align(hunks, orig, curr), nil
 	}
+}
+
+// isBinaryFile reports whether the file at path appears to be binary,
+// by scanning the first 8 KiB for null bytes — the same heuristic used by
+// git and less.
+func isBinaryFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 8192)
+	n, _ := f.Read(buf)
+	return isBinaryContent(buf[:n])
+}
+
+// isBinaryContent reports whether raw byte content appears to be binary.
+func isBinaryContent(data []byte) bool {
+	if len(data) > 8192 {
+		data = data[:8192]
+	}
+	return bytes.IndexByte(data, 0) >= 0
+}
+
+// isBinaryDiff reports whether a raw git diff output indicates a binary file
+// (git emits "Binary files … differ" instead of a unified diff).
+func isBinaryDiff(diff []byte) bool {
+	return bytes.Contains(diff, []byte("Binary files")) ||
+		bytes.Contains(diff, []byte("GIT binary patch"))
+}
+
+// binaryPlaceholder returns a single filler AlignedLine displayed when a
+// binary file is selected — avoids rendering raw binary bytes in the TUI.
+func binaryPlaceholder() []AlignedLine {
+	return []AlignedLine{{
+		LeftText:  "",
+		LeftKind:  KindFiller,
+		RightText: "  (binary file — not shown)",
+		RightKind: KindFiller,
+	}}
 }
 
 // splitLines splits a string into lines, stripping the trailing empty entry

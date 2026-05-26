@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/chrisrogers/tgd/internal/app"
@@ -46,6 +48,18 @@ func main() {
 		fmt.Fprintf(os.Stderr, "tgd: cannot determine working directory: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Exit cleanly when the terminal pane is closed externally (SIGHUP).
+	// Without this, tgd can become a zombie: alive and holding its socket open,
+	// but with no visible pane — causing the hook to keep refreshing invisibly.
+	go func() {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGHUP)
+		<-ch
+		os.Remove(pidPath)
+		os.Remove(sockPath)
+		os.Exit(0)
+	}()
 
 	// Create bubbletea program
 	model := app.New(cwd, sockPath)

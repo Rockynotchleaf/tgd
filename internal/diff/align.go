@@ -18,12 +18,23 @@ const (
 
 // AlignedLine is one row in the side-by-side diff view.
 // Both left and right can be non-empty (KindContext or Replace-paired).
-// A KindFiller side will have an empty text.
+// A KindFiller side will have an empty text and a LineNo of 0.
+// LineNo is 1-based; 0 means "no line number" (filler row).
 type AlignedLine struct {
-	LeftText  string
-	LeftKind  LineKind
-	RightText string
-	RightKind LineKind
+	LeftText   string
+	LeftKind   LineKind
+	LeftLineNo int // 1-based source line number; 0 = filler
+
+	RightText   string
+	RightKind   LineKind
+	RightLineNo int // 1-based source line number; 0 = filler
+}
+
+// pendingLine holds a line of text and its 1-based source line number,
+// used to accumulate runs of - and + lines before they can be paired.
+type pendingLine struct {
+	text   string
+	lineNo int
 }
 
 // Align converts unified diff hunks + full file lines into a side-by-side
@@ -55,15 +66,15 @@ func Align(hunks []*godiff.Hunk, orig, curr []string) []AlignedLine {
 				rText = curr[currIdx]
 			}
 			result = append(result, AlignedLine{
-				LeftText: orig[origIdx], LeftKind: KindContext,
-				RightText: rText, RightKind: KindContext,
+				LeftText: orig[origIdx], LeftKind: KindContext, LeftLineNo: origIdx + 1,
+				RightText: rText, RightKind: KindContext, RightLineNo: currIdx + 1,
 			})
 			origIdx++
 			currIdx++
 		}
 
 		// Walk the hunk body, accumulating pending - and + lines
-		var leftPending, rightPending []string
+		var leftPending, rightPending []pendingLine
 
 		body := string(h.Body)
 		for _, line := range strings.Split(body, "\n") {
@@ -90,21 +101,21 @@ func Align(hunks []*godiff.Hunk, orig, curr []string) []AlignedLine {
 					rText = curr[currIdx]
 				}
 				result = append(result, AlignedLine{
-					LeftText: lText, LeftKind: KindContext,
-					RightText: rText, RightKind: KindContext,
+					LeftText: lText, LeftKind: KindContext, LeftLineNo: origIdx + 1,
+					RightText: rText, RightKind: KindContext, RightLineNo: currIdx + 1,
 				})
 				origIdx++
 				currIdx++
 
 			case '-': // removed line
 				if origIdx < len(orig) {
-					leftPending = append(leftPending, orig[origIdx])
+					leftPending = append(leftPending, pendingLine{orig[origIdx], origIdx + 1})
 				}
 				origIdx++
 
 			case '+': // added line
 				if currIdx < len(curr) {
-					rightPending = append(rightPending, curr[currIdx])
+					rightPending = append(rightPending, pendingLine{curr[currIdx], currIdx + 1})
 				}
 				currIdx++
 			}
@@ -115,8 +126,8 @@ func Align(hunks []*godiff.Hunk, orig, curr []string) []AlignedLine {
 	// Emit remaining context lines after the last hunk
 	for origIdx < len(orig) && currIdx < len(curr) {
 		result = append(result, AlignedLine{
-			LeftText: orig[origIdx], LeftKind: KindContext,
-			RightText: curr[currIdx], RightKind: KindContext,
+			LeftText: orig[origIdx], LeftKind: KindContext, LeftLineNo: origIdx + 1,
+			RightText: curr[currIdx], RightKind: KindContext, RightLineNo: currIdx + 1,
 		})
 		origIdx++
 		currIdx++
@@ -124,15 +135,15 @@ func Align(hunks []*godiff.Hunk, orig, curr []string) []AlignedLine {
 	// Overflow safety: lines remaining on one side only (shouldn't happen in well-formed diffs)
 	for origIdx < len(orig) {
 		result = append(result, AlignedLine{
-			LeftText: orig[origIdx], LeftKind: KindRemoved,
+			LeftText: orig[origIdx], LeftKind: KindRemoved, LeftLineNo: origIdx + 1,
 			RightKind: KindFiller,
 		})
 		origIdx++
 	}
 	for currIdx < len(curr) {
 		result = append(result, AlignedLine{
-			LeftKind:  KindFiller,
-			RightText: curr[currIdx], RightKind: KindAdded,
+			LeftKind:    KindFiller,
+			RightText:   curr[currIdx], RightKind: KindAdded, RightLineNo: currIdx + 1,
 		})
 		currIdx++
 	}
@@ -146,8 +157,8 @@ func AlignNewFile(curr []string) []AlignedLine {
 	result := make([]AlignedLine, len(curr))
 	for i, line := range curr {
 		result[i] = AlignedLine{
-			LeftKind:  KindFiller,
-			RightText: line, RightKind: KindAdded,
+			LeftKind:    KindFiller,
+			RightText:   line, RightKind: KindAdded, RightLineNo: i + 1,
 		}
 	}
 	return result
@@ -159,7 +170,7 @@ func AlignDeletedFile(orig []string) []AlignedLine {
 	result := make([]AlignedLine, len(orig))
 	for i, line := range orig {
 		result[i] = AlignedLine{
-			LeftText: line, LeftKind: KindRemoved,
+			LeftText: line, LeftKind: KindRemoved, LeftLineNo: i + 1,
 			RightKind: KindFiller,
 		}
 	}
@@ -168,7 +179,7 @@ func AlignDeletedFile(orig []string) []AlignedLine {
 
 // flushPending pairs up accumulated removed and added lines 1:1 (replace pairs),
 // emitting filler on the shorter side for any excess lines.
-func flushPending(result []AlignedLine, left, right []string) []AlignedLine {
+func flushPending(result []AlignedLine, left, right []pendingLine) []AlignedLine {
 	maxLen := len(left)
 	if len(right) > maxLen {
 		maxLen = len(right)
@@ -176,12 +187,14 @@ func flushPending(result []AlignedLine, left, right []string) []AlignedLine {
 	for i := 0; i < maxLen; i++ {
 		al := AlignedLine{LeftKind: KindFiller, RightKind: KindFiller}
 		if i < len(left) {
-			al.LeftText = left[i]
+			al.LeftText = left[i].text
 			al.LeftKind = KindRemoved
+			al.LeftLineNo = left[i].lineNo
 		}
 		if i < len(right) {
-			al.RightText = right[i]
+			al.RightText = right[i].text
 			al.RightKind = KindAdded
+			al.RightLineNo = right[i].lineNo
 		}
 		result = append(result, al)
 	}

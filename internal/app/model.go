@@ -163,8 +163,8 @@ func (m Model) paneWidths() (fileW, leftW, rightW int) {
 	if fileW < minFileW {
 		fileW = minFileW
 	}
-	// Account for the border on the right side of the file panel (1 char)
-	remaining := m.width - fileW - 1
+	// Account for: file panel right border (1) + left/right diff pane divider (1)
+	remaining := m.width - fileW - 2
 	leftW = remaining / 2
 	rightW = remaining - leftW
 	return
