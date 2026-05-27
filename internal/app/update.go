@@ -64,9 +64,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cwd = m.cwd
 		}
 		m.cwd = cwd
+		for _, f := range msg.Files {
+			if f != "" {
+				m.touched[f] = true
+			}
+		}
 		m.loading = true
 		m.errMsg = ""
-		return m, cmdLoadAll(cwd, m.cursor)
+		return m, cmdLoadAll(cwd, m.touched, m.cursor)
 
 	// ── Keyboard input ───────────────────────────────────────────────────
 	case tea.KeyMsg:
@@ -93,7 +98,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyIs(msg, "r"):
 		m.loading = true
 		m.errMsg = ""
-		return m, cmdLoadAll(m.cwd, m.cursor)
+		return m, cmdLoadAll(m.cwd, m.touched, m.cursor)
 	}
 
 	// Focus-specific keys

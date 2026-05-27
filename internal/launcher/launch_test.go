@@ -88,6 +88,8 @@ func TestTerminalCandidates_emptyEnv(t *testing.T) {
 func TestTerminalNewWindow_args(t *testing.T) {
 	const cwd = "/tmp/test-repo"
 	const bin = "/usr/local/bin/tgd"
+	argv := []string{bin}
+	shellCmd := shellQuoteAll(argv)
 
 	cases := []struct {
 		name     string
@@ -103,7 +105,7 @@ func TestTerminalNewWindow_args(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := terminalNewWindow(tc.name, cwd, bin)
+			cmd := terminalNewWindow(tc.name, cwd, argv, shellCmd)
 			if cmd == nil {
 				t.Fatal("terminalNewWindow returned nil")
 			}
@@ -120,8 +122,39 @@ func TestTerminalNewWindow_args(t *testing.T) {
 	}
 }
 
+// TestTerminalNewWindow_sessionArg verifies the --session flag is threaded
+// into the spawned tgd invocation across the windowed and sh-wrapper paths.
+func TestTerminalNewWindow_sessionArg(t *testing.T) {
+	const cwd = "/tmp/test-repo"
+	const bin = "/usr/local/bin/tgd"
+	const sid = "abc-123"
+	argv := []string{bin, "--session", sid}
+	shellCmd := shellQuoteAll(argv)
+
+	// Native flag path (ghostty): --session/id appear as trailing argv.
+	cmd := terminalNewWindow("ghostty", cwd, argv, shellCmd)
+	want := []string{"ghostty", "--working-directory=" + cwd, "-e", bin, "--session", sid}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("ghostty args = %v, want %v", cmd.Args, want)
+	}
+	for i := range want {
+		if cmd.Args[i] != want[i] {
+			t.Errorf("ghostty Args[%d] = %q, want %q", i, cmd.Args[i], want[i])
+		}
+	}
+
+	// sh-wrapper path (xterm): --session/id are embedded in the exec string.
+	cmd = terminalNewWindow("xterm", cwd, argv, shellCmd)
+	got := cmd.Args[len(cmd.Args)-1]
+	wantWrap := `cd "/tmp/test-repo" && exec /usr/local/bin/tgd --session abc-123`
+	if got != wantWrap {
+		t.Errorf("xterm wrapper = %q, want %q", got, wantWrap)
+	}
+}
+
 func TestTerminalNewWindow_unknownTerminal(t *testing.T) {
-	cmd := terminalNewWindow("urxvt", "/tmp/repo", "/usr/bin/tgd")
+	argv := []string{"/usr/bin/tgd"}
+	cmd := terminalNewWindow("urxvt", "/tmp/repo", argv, shellQuoteAll(argv))
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd for unknown terminal")
 	}
@@ -151,7 +184,7 @@ func TestKittyRemoteCmd_nilWhenNotInPath(t *testing.T) {
 	t.Setenv("PATH", "/nonexistent")
 	defer os.Setenv("PATH", old)
 
-	cmd := kittyRemoteCmd("/tmp/repo", "tgd")
+	cmd := kittyRemoteCmd("/tmp/repo", []string{"tgd"})
 	if cmd != nil {
 		t.Error("expected nil when kitty is not in PATH")
 	}

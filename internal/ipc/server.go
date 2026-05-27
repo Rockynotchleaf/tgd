@@ -13,6 +13,9 @@ import (
 // RefreshMsg is sent into the bubbletea program when a debounced refresh fires.
 type RefreshMsg struct {
 	CWD string
+	// Files are the repo-relative paths reported by hooks during the debounce
+	// window. tgd merges them into its session "touched" set.
+	Files []string
 }
 
 // StartServer listens on sockPath for incoming IPC messages from tgd-hook.
@@ -39,13 +42,19 @@ func StartServer(sockPath string, p *tea.Program) error {
 		mu      sync.Mutex
 		timer   *time.Timer
 		lastCWD string
+		pending = map[string]bool{} // files touched since the last fire
 	)
 
 	fire := func() {
 		mu.Lock()
 		cwd := lastCWD
+		files := make([]string, 0, len(pending))
+		for f := range pending {
+			files = append(files, f)
+		}
+		pending = map[string]bool{}
 		mu.Unlock()
-		p.Send(RefreshMsg{CWD: cwd})
+		p.Send(RefreshMsg{CWD: cwd, Files: files})
 	}
 
 	for {
@@ -67,6 +76,9 @@ func StartServer(sockPath string, p *tea.Program) error {
 
 			mu.Lock()
 			lastCWD = msg.CWD
+			if msg.File != "" {
+				pending[msg.File] = true
+			}
 			if timer != nil {
 				timer.Stop()
 			}

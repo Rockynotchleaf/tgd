@@ -69,7 +69,7 @@ func (m Model) renderFileList(width int) string {
 		if m.loading {
 			return styles.Filler.Width(width).Render("  loading…")
 		}
-		return styles.Filler.Width(width).Render("  no changes")
+		return styles.Filler.Width(width).Render("  no session changes yet")
 	}
 
 	var sb strings.Builder

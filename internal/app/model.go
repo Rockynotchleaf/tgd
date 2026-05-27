@@ -83,6 +83,11 @@ type Model struct {
 	cursor     int
 	fileScroll int // index of first visible file in list
 
+	// touched is the set of repo-relative paths the hook has reported as
+	// edited this session. The file list is filtered to these, so unrelated
+	// untracked files never show. Populated via RefreshMsg.Files.
+	touched map[string]bool
+
 	// Diff content (middle + right panels)
 	aligned []diff.AlignedLine
 	leftVP  viewport.Model
@@ -104,16 +109,26 @@ func New(cwd, sockPath string) Model {
 		socketPath: sockPath,
 		focus:      FocusFileList,
 		loading:    true,
+		touched:    map[string]bool{},
 	}
 }
 
 // Init loads the initial diff as the first command.
 func (m Model) Init() tea.Cmd {
-	return cmdLoadAll(m.cwd, 0)
+	return cmdLoadAll(m.cwd, m.touched, 0)
 }
 
-// cmdLoadAll is a tea.Cmd that loads the file list + diff for a given cursor.
-func cmdLoadAll(cwd string, cursor int) tea.Cmd {
+// cmdLoadAll is a tea.Cmd that loads the file list + diff for a given cursor,
+// scoped to the files touched this session.
+//
+// touched is snapshotted synchronously (here, on the bubbletea update
+// goroutine) before the async closure runs, so the closure never races with
+// concurrent writes to the live map in Update.
+func cmdLoadAll(cwd string, touched map[string]bool, cursor int) tea.Cmd {
+	snap := make(map[string]bool, len(touched))
+	for k := range touched {
+		snap[k] = true
+	}
 	return func() tea.Msg {
 		root, err := diff.RepoRoot(cwd)
 		if err != nil {
@@ -123,6 +138,7 @@ func cmdLoadAll(cwd string, cursor int) tea.Cmd {
 		if err != nil {
 			return ErrorMsg{err}
 		}
+		files = diff.FilterTouched(files, snap)
 		if len(files) == 0 {
 			return DiffLoadedMsg{RepoRoot: root, Files: nil, Aligned: nil, Cursor: 0}
 		}

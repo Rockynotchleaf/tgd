@@ -70,6 +70,23 @@ func ChangedFiles(root string) ([]FileEntry, error) {
 	return entries, nil
 }
 
+// FilterTouched returns only the entries whose Path is present in touched.
+// touched holds repo-relative paths reported by the hook for files edited
+// this session. A nil or empty set yields no entries — the caller decides
+// how to present the "nothing touched yet" state.
+func FilterTouched(files []FileEntry, touched map[string]bool) []FileEntry {
+	if len(touched) == 0 {
+		return nil
+	}
+	var out []FileEntry
+	for _, f := range files {
+		if touched[f.Path] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // RawDiff returns the unified diff of a file relative to HEAD.
 // relPath is relative to root.
 func RawDiff(root, relPath string) ([]byte, error) {
