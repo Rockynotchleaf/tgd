@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -13,6 +14,11 @@ import (
 )
 
 func main() {
+	var sessionID string
+	flag.StringVar(&sessionID, "session", "",
+		"Claude session id; scopes this instance's socket/state so each session gets its own window")
+	flag.Parse()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tgd: cannot determine home directory: %v\n", err)
@@ -20,8 +26,7 @@ func main() {
 	}
 
 	stateDir := filepath.Join(home, ".local", "share", "tgd")
-	pidPath := filepath.Join(stateDir, "tgd.pid")
-	sockPath := filepath.Join(stateDir, "tgd.sock")
+	sockPath, pidPath := ipc.Paths(stateDir, sessionID)
 
 	// Bail out if another instance is already running
 	if ipc.IsAlive(pidPath, sockPath) {

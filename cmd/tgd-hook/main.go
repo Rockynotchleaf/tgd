@@ -64,11 +64,17 @@ func main() {
 	// Guard: only proceed if the edited file lives inside the repo.
 	// This prevents tgd from popping open when Claude edits files outside
 	// the current project (e.g. ~/.claude/settings.json, /tmp/scratch, etc.).
+	// relPath is the repo-relative path reported to tgd so it can scope the
+	// diff to files touched this session.
+	var relPath string
 	filePath := payload.ToolInput.FilePath
 	if filePath != "" {
 		abs, err := filepath.Abs(filePath)
 		if err != nil || !strings.HasPrefix(abs, repoRoot+string(filepath.Separator)) {
 			os.Exit(0)
+		}
+		if rel, err := filepath.Rel(repoRoot, abs); err == nil {
+			relPath = filepath.ToSlash(rel) // match git's forward-slash paths
 		}
 	}
 
@@ -77,18 +83,20 @@ func main() {
 		os.Exit(0)
 	}
 
-	sockPath := filepath.Join(home, ".local", "share", "tgd", "tgd.sock")
-	pidPath := filepath.Join(home, ".local", "share", "tgd", "tgd.pid")
+	// Scope the socket/PID to this Claude session so each session drives its
+	// own tgd window and never sees another session's edits.
+	stateDir := filepath.Join(home, ".local", "share", "tgd")
+	sockPath, pidPath := ipc.Paths(stateDir, payload.SessionID)
 
-	msg := ipc.Message{Type: "refresh", CWD: cwd}
+	msg := ipc.Message{Type: "refresh", CWD: cwd, File: relPath}
 
 	// Fast path: tgd is already running — send refresh and exit
 	if err := ipc.Send(sockPath, msg); err == nil {
 		os.Exit(0)
 	}
 
-	// tgd is not running — launch it and retry a few times
-	if err := launcher.Launch(cwd); err != nil {
+	// tgd is not running — launch it (scoped to this session) and retry a few times
+	if err := launcher.Launch(cwd, payload.SessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "tgd-hook: failed to launch tgd: %v\n", err)
 		os.Exit(0)
 	}

@@ -20,44 +20,54 @@ import (
 //  6. $TERM_PROGRAM            (set by ghostty, WezTerm, etc.)
 //  7. $TERMINAL                (Arch / freedesktop convention)
 //  8. PATH probe               ghostty → kitty → wezterm → foot → alacritty → xterm
-func Launch(cwd string) error {
+//
+// sessionID, when non-empty, is passed to the spawned tgd as `--session <id>`
+// so each Claude session gets its own isolated window and socket.
+func Launch(cwd, sessionID string) error {
 	tgdBin, err := exec.LookPath("tgd")
 	if err != nil {
 		tgdBin = "tgd" // hope it's in PATH when the target shell runs
 	}
 
+	// tgd invocation as argv, plus a shell-quoted form for sh -c wrappers.
+	argv := []string{tgdBin}
+	if sessionID != "" {
+		argv = append(argv, "--session", sessionID)
+	}
+	shellCmd := shellQuoteAll(argv)
+
 	// 1. tmux: split current window horizontally, 40% width
 	if os.Getenv("TMUX") != "" {
 		return startDetached(exec.Command(
-			"tmux", "split-window", "-h", "-p", "40", "-c", cwd, tgdBin,
+			"tmux", append([]string{"split-window", "-h", "-p", "40", "-c", cwd}, argv...)...,
 		))
 	}
 
 	// 2. zellij: new pane to the right
 	if os.Getenv("ZELLIJ") != "" {
 		return startDetached(exec.Command(
-			"zellij", "run", "--direction", "Right", "--cwd", cwd, "--", tgdBin,
+			"zellij", append([]string{"run", "--direction", "Right", "--cwd", cwd, "--"}, argv...)...,
 		))
 	}
 
 	// 3. kitty: try remote control first (requires allow_remote_control yes),
 	// fall back to opening a plain new window.
 	if os.Getenv("KITTY_WINDOW_ID") != "" {
-		if cmd := kittyRemoteCmd(cwd, tgdBin); cmd != nil {
+		if cmd := kittyRemoteCmd(cwd, argv); cmd != nil {
 			if err := startDetached(cmd); err == nil {
 				return nil
 			}
 			// remote control failed (probably not enabled) — fall through
 		}
-		return startDetached(terminalNewWindow("kitty", cwd, tgdBin))
+		return startDetached(terminalNewWindow("kitty", cwd, argv, shellCmd))
 	}
 
 	// 4. wezterm: try split-pane, fall back to a new window
 	if os.Getenv("WEZTERM_PANE") != "" {
-		if err := startDetached(weztermSplitCmd(cwd, tgdBin)); err == nil {
+		if err := startDetached(weztermSplitCmd(cwd, argv)); err == nil {
 			return nil
 		}
-		return startDetached(terminalNewWindow("wezterm", cwd, tgdBin))
+		return startDetached(terminalNewWindow("wezterm", cwd, argv, shellCmd))
 	}
 
 	// 5–8: name-based lookup (env vars first, then PATH probe)
@@ -65,7 +75,7 @@ func Launch(cwd string) error {
 		if _, err := exec.LookPath(name); err != nil {
 			continue // not installed
 		}
-		if cmd := terminalNewWindow(name, cwd, tgdBin); cmd != nil {
+		if cmd := terminalNewWindow(name, cwd, argv, shellCmd); cmd != nil {
 			return startDetached(cmd)
 		}
 	}
@@ -98,38 +108,39 @@ func terminalCandidates() []string {
 // kittyRemoteCmd builds a `kitty @ launch` command that opens a new OS window.
 // Requires allow_remote_control yes in kitty.conf. Returns nil if kitty is not
 // in PATH.
-func kittyRemoteCmd(cwd, tgdBin string) *exec.Cmd {
+func kittyRemoteCmd(cwd string, argv []string) *exec.Cmd {
 	if _, err := exec.LookPath("kitty"); err != nil {
 		return nil
 	}
-	return exec.Command("kitty", "@", "launch", "--type=os-window", "--cwd="+cwd, tgdBin)
+	return exec.Command("kitty", append([]string{"@", "launch", "--type=os-window", "--cwd=" + cwd}, argv...)...)
 }
 
 // weztermSplitCmd splits the active WezTerm pane horizontally.
-func weztermSplitCmd(cwd, tgdBin string) *exec.Cmd {
-	return exec.Command("wezterm", "cli", "split-pane", "--horizontal", "--cwd="+cwd, "--", tgdBin)
+func weztermSplitCmd(cwd string, argv []string) *exec.Cmd {
+	return exec.Command("wezterm", append([]string{"cli", "split-pane", "--horizontal", "--cwd=" + cwd, "--"}, argv...)...)
 }
 
 // terminalNewWindow returns a command that opens a new terminal window and
-// runs tgd in cwd. For terminals without a native --working-directory flag,
-// a `sh -c 'cd <cwd> && exec tgd'` wrapper is used. Returns nil only when
-// name is empty (should not happen in practice).
-func terminalNewWindow(name, cwd, tgdBin string) *exec.Cmd {
+// runs tgd (argv) in cwd. For terminals without a native --working-directory
+// flag, a `sh -c 'cd <cwd> && exec <shellCmd>'` wrapper is used, where shellCmd
+// is the shell-quoted tgd invocation. Returns nil only when name is empty
+// (should not happen in practice).
+func terminalNewWindow(name, cwd string, argv []string, shellCmd string) *exec.Cmd {
 	// Portable cwd setter for terminals without a --working-directory flag.
 	// exec replaces the shell so it leaves no zombie parent process.
-	shellWrapper := fmt.Sprintf("cd %q && exec %s", cwd, tgdBin)
+	shellWrapper := fmt.Sprintf("cd %q && exec %s", cwd, shellCmd)
 
 	switch name {
 	case "ghostty":
-		return exec.Command("ghostty", "--working-directory="+cwd, "-e", tgdBin)
+		return exec.Command("ghostty", append([]string{"--working-directory=" + cwd, "-e"}, argv...)...)
 	case "kitty":
-		return exec.Command("kitty", "--directory", cwd, tgdBin)
+		return exec.Command("kitty", append([]string{"--directory", cwd}, argv...)...)
 	case "wezterm":
-		return exec.Command("wezterm", "start", "--cwd", cwd, "--", tgdBin)
+		return exec.Command("wezterm", append([]string{"start", "--cwd", cwd, "--"}, argv...)...)
 	case "foot":
-		return exec.Command("foot", "--working-directory="+cwd, tgdBin)
+		return exec.Command("foot", append([]string{"--working-directory=" + cwd}, argv...)...)
 	case "alacritty":
-		return exec.Command("alacritty", "--working-directory", cwd, "-e", tgdBin)
+		return exec.Command("alacritty", append([]string{"--working-directory", cwd, "-e"}, argv...)...)
 	case "xterm":
 		return exec.Command("xterm", "-e", "sh", "-c", shellWrapper)
 	default:
@@ -137,6 +148,35 @@ func terminalNewWindow(name, cwd, tgdBin string) *exec.Cmd {
 		// terminals (urxvt, st, terminator, etc.) even if cwd is wrong.
 		return exec.Command(name, "-e", "sh", "-c", shellWrapper)
 	}
+}
+
+// shellQuoteAll joins argv into a single shell command string, quoting each
+// argument so it survives an `sh -c` wrapper intact.
+func shellQuoteAll(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = shellQuote(a)
+	}
+	return strings.Join(parts, " ")
+}
+
+// shellQuote returns s safe for use as a single POSIX shell word. Words made
+// only of shell-safe characters are returned unquoted; anything else is
+// single-quoted with embedded single quotes escaped.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '/', r == '.', r == '_', r == '-', r == ':':
+			// safe
+		default:
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
 }
 
 // startDetached starts cmd detached from the parent's process session so tgd
