@@ -6,8 +6,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/chrisrogers/tgd/internal/diff"
-	"github.com/chrisrogers/tgd/internal/ipc"
+	"github.com/Rockynotchleaf/tgd/internal/diff"
+	"github.com/Rockynotchleaf/tgd/internal/ipc"
 )
 
 // Focus identifies which panel has keyboard focus.

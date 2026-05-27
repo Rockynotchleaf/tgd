@@ -8,8 +8,8 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/chrisrogers/tgd/internal/app"
-	"github.com/chrisrogers/tgd/internal/ipc"
+	"github.com/Rockynotchleaf/tgd/internal/app"
+	"github.com/Rockynotchleaf/tgd/internal/ipc"
 )
 
 func main() {

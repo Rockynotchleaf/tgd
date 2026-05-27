@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrisrogers/tgd/internal/ipc"
-	"github.com/chrisrogers/tgd/internal/launcher"
+	"github.com/Rockynotchleaf/tgd/internal/ipc"
+	"github.com/Rockynotchleaf/tgd/internal/launcher"
 )
 
 // hookPayload mirrors the JSON Claude Code sends on stdin for PostToolUse.

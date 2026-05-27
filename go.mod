@@ -1,4 +1,4 @@
-module github.com/chrisrogers/tgd
+module github.com/Rockynotchleaf/tgd
 
 go 1.26.3
 

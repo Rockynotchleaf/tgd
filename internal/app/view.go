@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	rw "github.com/mattn/go-runewidth"
-	"github.com/chrisrogers/tgd/internal/diff"
+	"github.com/Rockynotchleaf/tgd/internal/diff"
 )
 
 const (
