@@ -145,9 +145,9 @@ func (m Model) renderStatusBar() string {
 
 	// Key hints
 	hintsStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	hints := hintsStyle.Render(" j/k:nav  tab:focus  r:refresh  q:quit")
+	hints := hintsStyle.Render(" j/k:nav  J/K:scroll  ^d/^u:page  tab:focus  r:refresh  q:quit")
 	if m.focus == FocusDiff {
-		hints = hintsStyle.Render(" j/k:scroll  g/G:top/bot  tab:focus  r:refresh  q:quit")
+		hints = hintsStyle.Render(" j/k:scroll  g/G:top/bot  ^d/^u:page  tab:focus  r:refresh  q:quit")
 	}
 
 	left := strings.Join(parts, "  ")

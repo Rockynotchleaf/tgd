@@ -8,6 +8,16 @@ import (
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	// ── Mouse wheel → always scrolls the diff, regardless of focus ───────
+	case tea.MouseMsg:
+		if !m.ready {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.leftVP, cmd = m.leftVP.Update(msg)
+		m.rightVP.SetYOffset(m.leftVP.YOffset)
+		return m, cmd
+
 	// ── Terminal resize ──────────────────────────────────────────────────
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -99,6 +109,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.errMsg = ""
 		return m, cmdLoadAll(m.cwd, m.touched, m.cursor)
+
+	// Diff-scroll keys work regardless of focus so the user can scroll
+	// the diff without first hitting Tab. Capital J/K scroll one line;
+	// page-up/down + ctrl+u/d scroll a page.
+	case keyIs(msg, "J"):
+		m.leftVP.ScrollDown(1)
+		m.rightVP.SetYOffset(m.leftVP.YOffset)
+		return m, nil
+
+	case keyIs(msg, "K"):
+		m.leftVP.ScrollUp(1)
+		m.rightVP.SetYOffset(m.leftVP.YOffset)
+		return m, nil
+
+	case keyIs(msg, "ctrl+d", "pgdown"):
+		m.leftVP.HalfPageDown()
+		m.rightVP.SetYOffset(m.leftVP.YOffset)
+		return m, nil
+
+	case keyIs(msg, "ctrl+u", "pgup"):
+		m.leftVP.HalfPageUp()
+		m.rightVP.SetYOffset(m.leftVP.YOffset)
+		return m, nil
 	}
 
 	// Focus-specific keys
@@ -161,16 +194,6 @@ func (m Model) handleDiffKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.leftVP.ScrollUp(1)
 		m.rightVP.SetYOffset(m.leftVP.YOffset)
 		return m, nil
-
-	case keyIs(msg, "ctrl+d", "pgdown"):
-		m.leftVP, cmd = m.leftVP.Update(msg)
-		m.rightVP.SetYOffset(m.leftVP.YOffset)
-		return m, cmd
-
-	case keyIs(msg, "ctrl+u", "pgup"):
-		m.leftVP, cmd = m.leftVP.Update(msg)
-		m.rightVP.SetYOffset(m.leftVP.YOffset)
-		return m, cmd
 	}
 
 	// Delegate other keys to left viewport (handles its own scrolling)
