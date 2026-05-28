@@ -56,14 +56,16 @@ Deleted files (status `D`): shown as all-removals, empty modified side.
 
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Navigate down (file list or scroll diff) |
+| `j` / `↓` | Navigate down (file list or scroll diff, depending on focus) |
 | `k` / `↑` | Navigate up |
+| `J` / `K` | Scroll diff by one line — works regardless of focus |
+| `Ctrl+D` / `PgDn` | Half-page down in diff — works regardless of focus |
+| `Ctrl+U` / `PgUp` | Half-page up in diff — works regardless of focus |
+| Mouse wheel | Scroll diff — works regardless of focus |
 | `Tab` | Toggle focus: file list ↔ diff panes |
 | `Enter` | Switch focus to diff panes |
-| `g` | Jump to top of diff |
-| `G` | Jump to bottom of diff |
-| `Ctrl+D` / `PgDn` | Page down |
-| `Ctrl+U` / `PgUp` | Page up |
+| `g` | Jump to top of diff (diff focus) |
+| `G` | Jump to bottom of diff (diff focus) |
 | `r` | Manual refresh |
 | `q` / `Ctrl+C` | Quit |
 

@@ -36,11 +36,18 @@ func Launch(cwd, sessionID string) error {
 	}
 	shellCmd := shellQuoteAll(argv)
 
-	// 1. tmux: split current window horizontally, 40% width
+	// 1. tmux: split the pane the hook was invoked from, not whatever pane the
+	// user happens to be focused on. Without -t, tmux targets the active pane
+	// of the active window, which causes tgd to pop up in the wrong window
+	// when multiple Claude sessions run side-by-side. $TMUX_PANE is set by
+	// tmux for every process running inside a pane.
 	if os.Getenv("TMUX") != "" {
-		return startDetached(exec.Command(
-			"tmux", append([]string{"split-window", "-h", "-p", "40", "-c", cwd}, argv...)...,
-		))
+		args := []string{"split-window", "-h", "-p", "40", "-c", cwd}
+		if pane := os.Getenv("TMUX_PANE"); pane != "" {
+			args = append(args, "-t", pane)
+		}
+		args = append(args, argv...)
+		return startDetached(exec.Command("tmux", args...))
 	}
 
 	// 2. zellij: new pane to the right
