@@ -24,6 +24,11 @@ type hookPayload struct {
 	HookEventName string    `json:"hook_event_name"`
 	ToolName      string    `json:"tool_name"`
 	ToolInput     toolInput `json:"tool_input"`
+	// AgentID is set only when the hook fires inside a sub-agent (Task tool).
+	// Sub-agents run with their own fresh session_id, so without this we'd
+	// route their edits to a nonexistent per-session socket and spawn a
+	// throwaway window. Its presence is the signal to route to the parent.
+	AgentID string `json:"agent_id"`
 }
 
 type toolInput struct {
@@ -86,9 +91,23 @@ func main() {
 	// Scope the socket/PID to this Claude session so each session drives its
 	// own tgd window and never sees another session's edits.
 	stateDir := filepath.Join(home, ".local", "share", "tgd")
-	sockPath, pidPath := ipc.Paths(stateDir, payload.SessionID)
 
-	msg := ipc.Message{Type: "refresh", CWD: cwd, File: relPath}
+	msg := ipc.Message{Type: "refresh", CWD: cwd, RepoRoot: repoRoot, File: relPath}
+
+	// Sub-agent edits: a sub-agent (Task tool) fires this hook with its own
+	// fresh session_id, not the parent's. Routing to its own per-session socket
+	// would spawn a throwaway window the user never sees and lose the edit.
+	// Instead, hand the edit to whatever live tgd is already serving this repo
+	// (the parent session's window). If none is running, drop silently rather
+	// than spawning a new window for an ephemeral sub-agent.
+	if payload.AgentID != "" {
+		if sock, ok := ipc.FindLiveByRepoRoot(stateDir, repoRoot); ok {
+			_ = ipc.Send(sock, msg)
+		}
+		os.Exit(0)
+	}
+
+	sockPath, pidPath := ipc.Paths(stateDir, payload.SessionID)
 
 	// Fast path: tgd is already running — send refresh and exit
 	if err := ipc.Send(sockPath, msg); err == nil {

@@ -10,6 +10,9 @@ import (
 type Message struct {
 	Type string `json:"type"` // "refresh" | "ping"
 	CWD  string `json:"cwd,omitempty"`
+	// RepoRoot is the absolute git repo root the edit belongs to. tgd uses it
+	// to ignore refreshes for a different repo than the one it's showing.
+	RepoRoot string `json:"repo_root,omitempty"`
 	// File is the repo-relative path of the file the hook just edited.
 	// tgd accumulates these into its session "touched" set and shows only
 	// those files. Empty when the hook has no file path to report.

@@ -13,6 +13,8 @@ IPC: unix socket at `~/.local/share/tgd/tgd-<session>.sock`. Hook sends `{"type"
 
 Per session: the socket/PID are keyed by Claude's `session_id` (`ipc.Paths`), so each session gets its own isolated tgd window and never sees another session's edits. The hook passes `--session <id>` to the spawned tgd. An empty session id falls back to the shared `tgd.sock`/`tgd.pid` (manual launch).
 
+Sub-agent edits: when Claude spawns a sub-agent (Task tool), its PostToolUse hook fires with the sub-agent's *own* fresh `session_id` plus an `agent_id`. Routing that to a per-session socket would spawn a throwaway window and lose the edit. Instead, on `agent_id != ""` the hook looks up the live tgd serving the same repo (via the `.meta` registry, keyed by repo root) and forwards the edit there — so sub-agent edits land in the parent session's window. Each running tgd records its repo root in `tgd-<session>.meta`; the hook scans these and picks the most-recently-started live match. tgd also ignores any refresh whose repo root differs from the one it's showing, so a session that touches two repos can't cross-contaminate the touched set.
+
 ## Build & Install
 
 ```bash
@@ -32,6 +34,7 @@ go test ./...           # run tests (diff engine tests in internal/diff/)
 | `internal/ipc/client.go` | Dial socket + send JSON message (`Message{Type, CWD, File}`) |
 | `internal/ipc/pid.go` | PID file write/read/liveness check |
 | `internal/ipc/paths.go` | Per-session socket/PID paths (`Paths(stateDir, sessionID)`) |
+| `internal/ipc/registry.go` | Per-instance `.meta` record (repo root + IPC paths); `FindLiveByRepoRoot` routes sub-agent edits to the parent window |
 | `internal/launcher/launch.go` | Spawn tgd in tmux split (if `$TMUX` set) or new Ghostty window |
 | `internal/app/model.go` | Bubbletea Model struct, Init(), cmdLoadAll, cmdLoadFile |
 | `internal/app/update.go` | Update() — key dispatch, viewport sync, async message handling |
@@ -51,6 +54,12 @@ changes yet". The set is in-memory and resets when tgd restarts.
 
 New files (status `A` or `??`): shown as all-additions, empty original side.
 Deleted files (status `D`): shown as all-removals, empty modified side.
+
+Long lines soft-wrap to the pane width rather than truncating (`renderBothSides`
+in `view.go`). Both sides are rendered together so a line that wraps to N visual
+rows on one side pads the other side to N rows, keeping the two viewports aligned
+under lockstep scrolling. Consequence: `j`/`k`/`J`/`K` and the scroll-% indicator
+count visual rows, not source lines.
 
 ## Keybindings
 
