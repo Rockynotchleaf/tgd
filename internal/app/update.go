@@ -69,6 +69,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── IPC refresh signal ───────────────────────────────────────────────
 	case RefreshMsg:
+		// Ignore edits from a different repo than the one this window shows.
+		// A tgd window is bound to the repo it was launched for; this prevents
+		// repo-relative path collisions (e.g. two repos both with src/main.go)
+		// from leaking another repo's files into the touched set.
+		if msg.RepoRoot != "" && m.repoRoot != "" && msg.RepoRoot != m.repoRoot {
+			return m, nil
+		}
 		cwd := msg.CWD
 		if cwd == "" {
 			cwd = m.cwd

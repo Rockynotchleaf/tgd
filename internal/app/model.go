@@ -207,8 +207,7 @@ func (m *Model) rebuildViewports() {
 	m.rightVP.Width = rightW
 	m.rightVP.Height = ph
 
-	left := renderSide(m.aligned, sideLeft, leftW, styles)
-	right := renderSide(m.aligned, sideRight, rightW, styles)
+	left, right := renderBothSides(m.aligned, leftW, rightW, styles)
 
 	m.leftVP.SetContent(left)
 	m.rightVP.SetContent(right)

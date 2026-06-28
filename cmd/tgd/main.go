@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/Rockynotchleaf/tgd/internal/app"
+	"github.com/Rockynotchleaf/tgd/internal/diff"
 	"github.com/Rockynotchleaf/tgd/internal/ipc"
 )
 
@@ -45,13 +46,27 @@ func main() {
 		fmt.Fprintf(os.Stderr, "tgd: cannot write PID file: %v\n", err)
 		os.Exit(1)
 	}
+	// Clean up both the PID and the socket on normal exit. Previously only the
+	// PID file was removed, leaving orphaned sockets behind and risking a
+	// false-positive liveness check from a recycled PID + stale socket.
 	defer os.Remove(pidPath)
+	defer os.Remove(sockPath)
+	metaPath := ipc.MetaPath(stateDir, sessionID)
+	defer os.Remove(metaPath)
 
 	// Working directory (where diff is computed)
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tgd: cannot determine working directory: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Register this instance by its repo root so hooks can route sub-agent
+	// edits (which arrive under a different session id) to this window.
+	// Best-effort: a manual launch outside any git repo simply isn't
+	// discoverable by repo root, which is fine.
+	if root, err := diff.RepoRoot(cwd); err == nil {
+		_ = ipc.WriteMeta(stateDir, sessionID, root)
 	}
 
 	// Exit cleanly when the terminal pane is closed externally (SIGHUP).
@@ -63,6 +78,7 @@ func main() {
 		<-ch
 		os.Remove(pidPath)
 		os.Remove(sockPath)
+		os.Remove(metaPath)
 		os.Exit(0)
 	}()
 

@@ -13,6 +13,8 @@ import (
 // RefreshMsg is sent into the bubbletea program when a debounced refresh fires.
 type RefreshMsg struct {
 	CWD string
+	// RepoRoot is the absolute git repo root the reported edits belong to.
+	RepoRoot string
 	// Files are the repo-relative paths reported by hooks during the debounce
 	// window. tgd merges them into its session "touched" set.
 	Files []string
@@ -39,22 +41,24 @@ func StartServer(sockPath string, p *tea.Program) error {
 
 	const debounce = 500 * time.Millisecond
 	var (
-		mu      sync.Mutex
-		timer   *time.Timer
-		lastCWD string
-		pending = map[string]bool{} // files touched since the last fire
+		mu       sync.Mutex
+		timer    *time.Timer
+		lastCWD  string
+		lastRoot string
+		pending  = map[string]bool{} // files touched since the last fire
 	)
 
 	fire := func() {
 		mu.Lock()
 		cwd := lastCWD
+		root := lastRoot
 		files := make([]string, 0, len(pending))
 		for f := range pending {
 			files = append(files, f)
 		}
 		pending = map[string]bool{}
 		mu.Unlock()
-		p.Send(RefreshMsg{CWD: cwd, Files: files})
+		p.Send(RefreshMsg{CWD: cwd, RepoRoot: root, Files: files})
 	}
 
 	for {
@@ -76,6 +80,7 @@ func StartServer(sockPath string, p *tea.Program) error {
 
 			mu.Lock()
 			lastCWD = msg.CWD
+			lastRoot = msg.RepoRoot
 			if msg.File != "" {
 				pending[msg.File] = true
 			}

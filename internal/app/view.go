@@ -161,18 +161,77 @@ func (m Model) renderStatusBar() string {
 	return styles.StatusBar.Width(m.width).Render(bar)
 }
 
-// renderSide renders all AlignedLines for one side (left/right) into a
-// newline-joined string suitable for viewport.SetContent.
+// renderBothSides renders the left and right diff viewports together so each
+// AlignedLine occupies the SAME number of visual rows on both sides.
 //
-// Each line is prefixed with a line-number gutter: "  42 │ content…"
-// Filler rows (LineNo == 0) show blank space in the gutter: "     │"
-// Lines are then padded to exactly `width` display chars total.
-func renderSide(lines []diff.AlignedLine, side string, width int, styles Styles) string {
-	if width < 1 {
-		return ""
+// Long lines are soft-wrapped to the pane's content width instead of being
+// truncated. When one side wraps to more rows than the other, the shorter
+// side is padded with blank rows so the two viewports stay aligned under the
+// lockstep scrolling in Update. The line number shows only on the first row
+// of a wrapped line; continuation rows get a blank gutter.
+func renderBothSides(lines []diff.AlignedLine, leftW, rightW int, styles Styles) (left, right string) {
+	leftNumW, leftContent := gutterDims(lines, sideLeft, leftW)
+	rightNumW, rightContent := gutterDims(lines, sideRight, rightW)
+
+	lineNoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+
+	// gutter renders the line-number column: the number on the first row of a
+	// line, blanks on wrapped continuation rows (cont) and filler rows.
+	gutter := func(numWidth, lineNo int, cont bool) string {
+		var numStr string
+		if lineNo > 0 && !cont {
+			numStr = fmt.Sprintf("%*d", numWidth, lineNo)
+		} else {
+			numStr = strings.Repeat(" ", numWidth)
+		}
+		return lineNoStyle.Render(numStr) + sepStyle.Render(" │ ")
 	}
 
-	// Determine gutter width from the highest line number on this side.
+	style := func(kind diff.LineKind, padded string) string {
+		switch kind {
+		case diff.KindRemoved:
+			return styles.Removed.Render(padded)
+		case diff.KindAdded:
+			return styles.Added.Render(padded)
+		case diff.KindFiller:
+			return styles.Filler.Render(padded)
+		default:
+			return styles.Context.Render(padded)
+		}
+	}
+
+	var lsb, rsb strings.Builder
+	for _, al := range lines {
+		lChunks := wrapToWidth(al.LeftText, leftContent)
+		rChunks := wrapToWidth(al.RightText, rightContent)
+		rows := len(lChunks)
+		if len(rChunks) > rows {
+			rows = len(rChunks)
+		}
+		for i := 0; i < rows; i++ {
+			lText, rText := "", ""
+			if i < len(lChunks) {
+				lText = lChunks[i]
+			}
+			if i < len(rChunks) {
+				rText = rChunks[i]
+			}
+			lsb.WriteString(gutter(leftNumW, al.LeftLineNo, i > 0) +
+				style(al.LeftKind, padToWidth(lText, leftContent)))
+			lsb.WriteByte('\n')
+			rsb.WriteString(gutter(rightNumW, al.RightLineNo, i > 0) +
+				style(al.RightKind, padToWidth(rText, rightContent)))
+			rsb.WriteByte('\n')
+		}
+	}
+	return lsb.String(), rsb.String()
+}
+
+// gutterDims returns the line-number column width and the remaining content
+// width for one side, given the pane width. The gutter is laid out as
+// "<numWidth digits> │ " = numWidth + 3 chars.
+func gutterDims(lines []diff.AlignedLine, side string, width int) (numWidth, contentWidth int) {
 	maxLineNo := 0
 	for _, al := range lines {
 		n := al.LeftLineNo
@@ -183,58 +242,44 @@ func renderSide(lines []diff.AlignedLine, side string, width int, styles Styles)
 			maxLineNo = n
 		}
 	}
-	numWidth := len(strconv.Itoa(maxLineNo))
+	numWidth = len(strconv.Itoa(maxLineNo))
 	if numWidth < 1 {
 		numWidth = 1
 	}
-	// Gutter layout: "<numWidth digits> │ " = numWidth + 3 chars
-	gutterWidth := numWidth + 3
-	contentWidth := width - gutterWidth
+	contentWidth = width - (numWidth + 3)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
+	return
+}
 
-	lineNoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
-
-	var sb strings.Builder
-	for _, al := range lines {
-		var text string
-		var kind diff.LineKind
-		var lineNo int
-		if side == sideLeft {
-			text, kind, lineNo = al.LeftText, al.LeftKind, al.LeftLineNo
-		} else {
-			text, kind, lineNo = al.RightText, al.RightKind, al.RightLineNo
-		}
-
-		// Gutter: right-aligned number or blank, then " │ "
-		var numStr string
-		if lineNo > 0 {
-			numStr = fmt.Sprintf("%*d", numWidth, lineNo)
-		} else {
-			numStr = strings.Repeat(" ", numWidth)
-		}
-		gutter := lineNoStyle.Render(numStr) + sepStyle.Render(" │ ")
-
-		// Content: pad/truncate to contentWidth, then apply diff styling
-		padded := padToWidth(text, contentWidth)
-		var content string
-		switch kind {
-		case diff.KindRemoved:
-			content = styles.Removed.Render(padded)
-		case diff.KindAdded:
-			content = styles.Added.Render(padded)
-		case diff.KindFiller:
-			content = styles.Filler.Render(padded)
-		default:
-			content = styles.Context.Render(padded)
-		}
-
-		sb.WriteString(gutter + content)
-		sb.WriteByte('\n')
+// wrapToWidth hard-wraps s into chunks no wider than `width` display columns,
+// measuring with go-runewidth so wide (CJK) runes are counted correctly and
+// never split across a boundary. An empty string yields a single empty chunk
+// so it still occupies one row. A single rune wider than width is emitted on
+// its own row rather than looping forever.
+func wrapToWidth(s string, width int) []string {
+	if width < 1 {
+		width = 1
 	}
-	return sb.String()
+	if s == "" {
+		return []string{""}
+	}
+	var chunks []string
+	var b strings.Builder
+	cur := 0
+	for _, r := range s {
+		rwid := rw.RuneWidth(r)
+		if cur+rwid > width && cur > 0 {
+			chunks = append(chunks, b.String())
+			b.Reset()
+			cur = 0
+		}
+		b.WriteRune(r)
+		cur += rwid
+	}
+	chunks = append(chunks, b.String())
+	return chunks
 }
 
 // padToWidth pads or truncates a string to exactly `width` display columns.
